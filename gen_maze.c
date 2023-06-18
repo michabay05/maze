@@ -25,7 +25,7 @@ typedef enum {
     SOUTH,
     WEST,
     EAST,
-} Dir;
+} NeighborDir;
 
 typedef enum {
     VERTICAL,
@@ -46,8 +46,12 @@ Wall wall_init(size_t start, size_t target, WallType type) {
     };
 }
 
-#define MAZE_ROWS 30
-#define MAZE_COLS 30
+#ifndef MAZE_SIZE
+#define MAZE_SIZE 30
+#endif
+
+#define MAZE_ROWS MAZE_SIZE
+#define MAZE_COLS MAZE_SIZE
 
 #define STACK_TYPE Cell*
 #define STACK_H_IMPLEMENTATION
@@ -83,25 +87,24 @@ void env_deinit(Env* env) {
     vec_deinit(&env->removed_walls);
 }
 
-void shuffle(Dir sides[4]) {
+void shuffle(NeighborDir sides[4]) {
     size_t n = 4;
     for (size_t i = n - 1; i >= 1; i--) {
         size_t j = rand() % i;
-        Dir temp = sides[i];
+        NeighborDir temp = sides[i];
         sides[i] = sides[j];
         sides[j] = temp;
     }
 }
 
-Dir unvisited_neighbors(Cell* grid, int row, int col) {
+NeighborDir unvisited_neighbors(Cell* grid, int row, int col) {
     (void) grid;
     (void) row;
     (void) col;
-    Dir sides[4] =  {NORTH, SOUTH, EAST, WEST};
+    NeighborDir sides[4] = {NORTH, SOUTH, EAST, WEST};
     shuffle(sides);
     int new_row = row;
     int new_col = col;
-#if 1
     for (size_t i = 0; i < 4; i++) {
         switch (sides[i]) {
             case NORTH: new_row = row - 1; break;
@@ -119,26 +122,6 @@ Dir unvisited_neighbors(Cell* grid, int row, int col) {
         new_row = row;
         new_col = col;
     }
-
-    // exit(0);
-#else
-    int new_row = row - 1;
-    if (in_bound(new_row, 0, MAZE_ROWS) && !grid[to_ind(new_row, col)].visited) {
-        return NORTH;
-    }
-    new_row = row + 1;
-    if (in_bound(new_row, 0, MAZE_ROWS) && !grid[to_ind(new_row, col)].visited) {
-        return SOUTH;
-    }
-    int new_col = col + 1;
-    if (in_bound(new_col, 0, MAZE_COLS) && !grid[to_ind(row, new_col)].visited) {
-        return EAST;
-    }
-    new_col = col - 1;
-    if (in_bound(new_col, 0, MAZE_COLS) && !grid[to_ind(row, new_col)].visited) {
-        return WEST;
-    }
-#endif
     return CENTER;
 }
 
@@ -155,30 +138,28 @@ void remove_wall(Vec* walls, size_t start, size_t target) {
     }
 }
 
-Env env;
-
-void gen_maze() {
+void gen_maze(Env* env) {
     // Random initial cell
     int row = rand() % MAZE_ROWS;
     int col = rand() % MAZE_COLS;
-    Cell* current = &env.grid[to_ind(row, col)];
+    Cell* current = &env->grid[to_ind(row, col)];
     // Mark current as visited
     current->visited = true;
     // Push random initial cell to the stack
-    stack_push(&env.stack, current);
+    stack_push(&env->stack, current);
 
     int removed = 0;
-    while (env.stack.count > 0) {
+    while (env->stack.count > 0) {
         // Pop cell from the stack
-        current = stack_pop(&env.stack);
+        current = stack_pop(&env->stack);
         // Updating the current cell's row and column
         row = current->id / MAZE_ROWS;
         col = current->id % MAZE_ROWS;
         // Unvisited neighbors of the current cell
-        Dir unvisited = unvisited_neighbors(env.grid, row, col);
+        NeighborDir unvisited = unvisited_neighbors(env->grid, row, col);
         if (unvisited == CENTER) continue;
         // Push the current cell to the stack
-        stack_push(&env.stack, current);
+        stack_push(&env->stack, current);
 
         int chosen_row = row;
         int chosen_col = col;
@@ -192,14 +173,14 @@ void gen_maze() {
                 assert(false);
                 break;
         }
-        Cell* chosen = &env.grid[to_ind(chosen_row, chosen_col)]; 
+        Cell* chosen = &env->grid[to_ind(chosen_row, chosen_col)]; 
         // Remove wall between current and chosen cell
-        remove_wall(&env.removed_walls, to_ind(row, col), to_ind(chosen_row, chosen_col));
+        remove_wall(&env->removed_walls, to_ind(row, col), to_ind(chosen_row, chosen_col));
         removed++;
         // ---- printf("Wall from [r=%d, c=%d] to [r=%d, c=%d] is\tREMOVED\n", row, col, chosen_row, chosen_col);
         // Mark chosen cell as visited
         chosen->visited = true;
-        stack_push(&env.stack, chosen);
+        stack_push(&env->stack, chosen);
     }
 }
 
@@ -216,9 +197,9 @@ void gen_maze() {
 
 #define IMG_WIDTH (MAZE_COLS * OPEN_WIDTH) + ((MAZE_COLS+1) * BORDER_THICKNESS)
 #define IMG_HEIGHT (MAZE_ROWS * OPEN_HEIGHT) + ((MAZE_ROWS+1) * BORDER_THICKNESS)
-uint32_t pixels[IMG_HEIGHT][IMG_WIDTH];
 
-void fill_rect(size_t rx, size_t ry, size_t rw, size_t rh, uint32_t color) {
+
+void fill_rect(uint32_t (*pixels)[IMG_WIDTH], size_t rx, size_t ry, size_t rw, size_t rh, uint32_t color) {
     assert(rx + rw <= IMG_WIDTH);
     assert(ry + rh <= IMG_HEIGHT);
     for (size_t y = ry; y < (ry + rh); y++) {
@@ -228,13 +209,15 @@ void fill_rect(size_t rx, size_t ry, size_t rw, size_t rh, uint32_t color) {
     }
 }
 
-void draw_maze() {
+void init_maze(uint32_t (*pixels)[IMG_WIDTH]) {
+    Env env = env_init();
+    gen_maze(&env);
     size_t y, x;
     for (size_t r = 0; r < MAZE_ROWS; r++) {
         for (size_t c = 0; c <= MAZE_COLS; c++) {
             y = (r * OPEN_HEIGHT) + (r * BORDER_THICKNESS);
             x = (c * OPEN_WIDTH) + (c * BORDER_THICKNESS);
-            fill_rect(x, y, BORDER_THICKNESS, OPEN_HEIGHT + (2*BORDER_THICKNESS), SOLID);
+            fill_rect(pixels, x, y, BORDER_THICKNESS, OPEN_HEIGHT + (2*BORDER_THICKNESS), SOLID);
         }
     }
 
@@ -242,30 +225,24 @@ void draw_maze() {
         for (size_t c = 0; c < MAZE_COLS; c++) {
             y = (r * OPEN_HEIGHT) + (r * BORDER_THICKNESS);
             x = (c * OPEN_WIDTH) + (c * BORDER_THICKNESS);
-            fill_rect(x, y, OPEN_WIDTH + (2*BORDER_THICKNESS), BORDER_THICKNESS, SOLID);
+            fill_rect(pixels, x, y, OPEN_WIDTH + (2*BORDER_THICKNESS), BORDER_THICKNESS, SOLID);
         }
     }
 
     for (size_t i = 0; i < env.removed_walls.length; i++) {
-        // size_t start[2] = {
-        //     env.removed_walls.items[i].start / MAZE_ROWS,
-        //     env.removed_walls.items[i].start % MAZE_ROWS
-        // };
         size_t target[2] = {
             env.removed_walls.items[i].target / MAZE_ROWS,
             env.removed_walls.items[i].target % MAZE_ROWS
         };
-        // printf("REMOVED\t(r = %lu, c = %lu)\t(r = %lu, c = %lu)\n", start[0], start[1], target[0], target[1]);
-        WallType type = env.removed_walls.items[i].type;
-        switch (type) {
+        switch (env.removed_walls.items[i].type) {
             case VERTICAL:
-                fill_rect(
+                fill_rect(pixels,
                     target[1] * OPEN_WIDTH + target[1] * BORDER_THICKNESS, 
                     target[0] * OPEN_HEIGHT + target[0] * BORDER_THICKNESS + BORDER_THICKNESS,
                     BORDER_THICKNESS, OPEN_HEIGHT, OPEN);
                 break;
             case HORIZONTAL:
-                fill_rect(
+                fill_rect(pixels,
                     target[1] * OPEN_WIDTH + target[1] * BORDER_THICKNESS + BORDER_THICKNESS,
                     target[0] * OPEN_HEIGHT + target[0] * BORDER_THICKNESS,
                     OPEN_WIDTH, BORDER_THICKNESS, OPEN);
@@ -273,19 +250,20 @@ void draw_maze() {
             default: break;
         }
     }
+    env_deinit(&env);
 }
 
-void save_as_ppm(const char* filename) {
+void save_as_ppm(uint32_t (*pixels)[IMG_WIDTH], const char* filename) {
     FILE* fp = fopen(filename, "w");
     if (fp == NULL) {
         fprintf(stderr, "ERROR: Failed to open '%s' for writing\n", filename);
-        exit(1);
+        exit(72); // UNIX sysexit.h error code 72
     }
 
     fprintf(fp, "P6\n%d %d 255\n", IMG_WIDTH, IMG_HEIGHT);
-    for (size_t r = 0; r < IMG_HEIGHT; r++) {
-        for (size_t c = 0; c < IMG_WIDTH; c++) {
-            uint32_t pixel = pixels[r][c];
+    for (size_t y = 0; y < IMG_HEIGHT; y++) {
+        for (size_t x = 0; x < IMG_WIDTH; x++) {
+            uint32_t pixel = pixels[y][x];
             // Color HEX code format: 0xRRGGBB
             uint8_t bytes[3] = {
                 (pixel >> 8*2) & 0xFF, //     0xRR & 0xFF
@@ -300,11 +278,9 @@ void save_as_ppm(const char* filename) {
 }
 
 int main(void) {
+    uint32_t pixels[IMG_HEIGHT][IMG_WIDTH] = {0};
     srand(time(NULL));
-    env = env_init();
-    gen_maze();
-    draw_maze();
-    save_as_ppm("out.ppm");
-    env_deinit(&env);
+    init_maze(pixels);
+    save_as_ppm(pixels, "out.ppm");
     return 0;
 }
